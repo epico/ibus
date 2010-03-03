@@ -1007,13 +1007,15 @@ _ic_set_engine (BusInputContext  *context,
                                     &error,
                                     G_TYPE_STRING, &engine_name,
                                     G_TYPE_INVALID);
-     if (!retval) {
+    if (!retval) {
         reply = ibus_message_new_error (message,
                                         error->name,
                                         error->message);
         ibus_error_free (error);
         return reply;
     }
+    
+    bus_input_context_disable (context);
 
     g_signal_emit (context, context_signals[REQUEST_ENGINE], 0, engine_name);
 

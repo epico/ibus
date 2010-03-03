@@ -759,11 +759,64 @@ void
 bus_engine_proxy_focus_out (BusEngineProxy *engine)
 {
     g_assert (BUS_IS_ENGINE_PROXY (engine));
+    
+    IBusMessage *reply_message;
+    IBusPendingCall *pending = NULL;
+    IBusError *error = NULL;
+    gboolean retval;
+
     if (engine->has_focus) {
         engine->has_focus = FALSE;
+        /* change the focus out async call to sync call for ibus-hangul */
+#if 0
         ibus_proxy_call ((IBusProxy *) engine,
                          "FocusOut",
                          G_TYPE_INVALID);
+#endif
+        
+        retval = ibus_proxy_call_with_reply ((IBusProxy *) engine,
+                                            "FocusOut",
+                                            &pending,
+                                            -1,
+                                            &error,
+                                            G_TYPE_INVALID);
+
+        if (!retval) {
+          g_debug ("%s: %s", error->name, error->message);
+          ibus_error_free (error);
+          return;
+        }
+
+        /* wait reply or timeout */
+        IBusConnection *connection = ibus_proxy_get_connection ((IBusProxy *) engine);
+        while (!ibus_pending_call_get_completed (pending)) {
+            ibus_connection_read_write_dispatch (connection, -1);
+        }
+        
+        reply_message = ibus_pending_call_steal_reply (pending);
+        ibus_pending_call_unref (pending);
+
+        if (reply_message == NULL) {
+          g_debug ("%s: Do not recevie reply of FocusOut", DBUS_ERROR_NO_REPLY);
+          return;
+        }
+        else if ((error = ibus_error_new_from_message (reply_message)) != NULL) {
+            g_debug ("%s: %s", error->name, error->message);
+            ibus_message_unref(reply_message);
+            ibus_error_free (error);
+            return;
+        }
+        else {
+            if (!ibus_message_get_args (reply_message,
+                                        &error,
+                                        G_TYPE_INVALID)){
+                g_debug ("%s: %s", error->name, error->message);
+                ibus_error_free(error);
+                return;
+            }
+            ibus_message_unref (reply_message);
+        }
+        return;
     }
 }
 
