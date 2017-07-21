@@ -27,6 +27,9 @@
 #include <unistd.h>
 #include <glib/gstdio.h>
 #include <gio/gio.h>
+#include <gio/gunixfdlist.h>
+#include <gio/gunixinputstream.h>
+#include <gio/gunixoutputstream.h>
 #include "ibusmarshalers.h"
 #include "ibusinternal.h"
 #include "ibusshare.h"
@@ -85,6 +88,16 @@ static GVariant *ibus_bus_call_sync             (IBusBus                *bus,
                                                  const gchar            *member,
                                                  GVariant               *parameters,
                                                  const GVariantType     *reply_type);
+static GVariant *ibus_bus_call_with_unix_fd_list_sync             (IBusBus                *bus,
+                                                                   const gchar            *service,
+                                                                   const gchar            *path,
+                                                                   const gchar            *interface,
+                                                                   const gchar            *member,
+                                                                   GVariant               *parameters,
+                                                                   const GVariantType     *reply_type,
+                                                                   GUnixFDList        *fd_list,
+                                                                   GUnixFDList        **out_fd_list);
+
 static void      ibus_bus_call_async             (IBusBus                *bus,
                                                   const gchar            *service,
                                                   const gchar            *path,
@@ -682,6 +695,64 @@ ibus_bus_is_connected (IBusBus *bus)
     return TRUE;
 }
 
+static IBusInputContext *
+_create_sandbox_input_context (IBusBus      *bus,
+                               const gchar  *client_name)
+{
+    g_return_val_if_fail (IBUS_IS_BUS (bus), NULL);
+    g_return_val_if_fail (client_name != NULL, NULL);
+
+    gchar *path;
+    IBusInputContext *context = NULL;
+    GUnixFDList *out_fd_list;
+    GVariant *result;
+    result = ibus_bus_call_with_unix_fd_list_sync (bus,
+                                                   IBUS_SANDBOX_SERVICE_IBUS,
+                                                   IBUS_SANDBOX_PATH_IBUS,
+                                                   IBUS_SANDBOX_INTERFACE_IBUS,
+                                                   "CreateInputContext",
+                                                   g_variant_new ("(s)", client_name),
+                                                   G_VARIANT_TYPE ("(o)"),
+                                                   NULL,
+                                                   &out_fd_list);
+
+    if (result != NULL) {
+        GError *error = NULL;
+        gint length;
+        gint fd;
+        GIOStream *stream = NULL;
+        GDBusConnection *connection = NULL;
+        g_variant_get (result, "(&o)", &path);
+
+        length = g_unix_fd_list_get_length (out_fd_list);
+        if (length == 1) {
+            fd = g_unix_fd_list_get (out_fd_list, 0, NULL);
+            stream = g_simple_io_stream_new (g_unix_input_stream_new (fd, TRUE),
+                                             g_unix_output_stream_new (fd, TRUE));
+
+            connection = g_dbus_connection_new_sync (stream,
+                                                     NULL,
+                                                     G_DBUS_CONNECTION_FLAGS_AUTHENTICATION_CLIENT |
+                                                     G_DBUS_CONNECTION_FLAGS_MESSAGE_BUS_CONNECTION,
+                                                     NULL,
+                                                     bus->priv->cancellable,
+                                                     &error);
+            bus->priv->connection = connection;
+        } else {
+            g_warning ("ibus_bus_create_input_context: fd_list_length: %d", length);
+        }
+
+        context = ibus_input_context_new (path, bus->priv->connection, NULL, &error);
+        g_variant_unref (result);
+        if (context == NULL) {
+            g_warning ("ibus_bus_create_input_context: %s", error->message);
+            g_error_free (error);
+        }
+    }
+
+    return context;
+}
+
 IBusInputContext *
 ibus_bus_create_input_context (IBusBus      *bus,
                                const gchar  *client_name)
@@ -709,6 +780,8 @@ ibus_bus_create_input_context (IBusBus      *bus,
             g_warning ("ibus_bus_create_input_context: %s", error->message);
             g_error_free (error);
         }
+    } else {
+        context = _create_sandbox_input_context (bus, client_name);
     }
 
     return context;
@@ -2382,6 +2455,46 @@ ibus_bus_call_sync (IBusBus            *bus,
                                           ibus_get_timeout (),
                                           NULL,
                                           &error);
+
+    if (result == NULL) {
+        g_warning ("ibus_bus_call_sync: %s.%s: %s", interface, member, error->message);
+        g_error_free (error);
+        return NULL;
+    }
+
+    return result;
+}
+
+static GVariant *
+ibus_bus_call_with_unix_fd_list_sync (IBusBus            *bus,
+                                      const gchar        *bus_name,
+                                      const gchar        *path,
+                                      const gchar        *interface,
+                                      const gchar        *member,
+                                      GVariant           *parameters,
+                                      const GVariantType *reply_type,
+                                      GUnixFDList        *fd_list,
+                                      GUnixFDList        **out_fd_list)
+{
+    g_assert (IBUS_IS_BUS (bus));
+    g_assert (member != NULL);
+    g_return_val_if_fail (ibus_bus_is_connected (bus), NULL);
+
+    GError *error = NULL;
+    GVariant *result;
+    result = g_dbus_connection_call_with_unix_fd_list_sync (bus->priv->connection,
+                                                            bus_name,
+                                                            path,
+                                                            interface,
+                                                            member,
+                                                            parameters,
+                                                            reply_type,
+                                                            G_DBUS_CALL_FLAGS_NO_AUTO_START,
+                                                            ibus_get_timeout (),
+                                                            fd_list,
+                                                            out_fd_list,
+                                                            NULL,
+                                                            &error);
 
     if (result == NULL) {
         g_warning ("ibus_bus_call_sync: %s.%s: %s", interface, member, error->message);

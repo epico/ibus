@@ -52,6 +52,13 @@
 #define IBUS_SERVICE_IBUS       "org.freedesktop.IBus"
 
 /**
+ * IBUS_SANDBOX_SERVICE_IBUS:
+ *
+ * Address of IBus sandbox service.
+ */
+#define IBUS_SANDBOX_SERVICE_IBUS       "org.freedesktop.Portals.IBus"
+
+/**
  * IBUS_SERVICE_PANEL:
  *
  * Address of IBus panel service.
@@ -78,6 +85,13 @@
  * D-Bus path for IBus
  */
 #define IBUS_PATH_IBUS          "/org/freedesktop/IBus"
+
+/**
+ * IBUS_SANDBOX_PATH_IBUS:
+ *
+ * D-Bus sandbox path for IBus
+ */
+#define IBUS_SANDBOX_PATH_IBUS          "/org/freedesktop/Portals/IBus"
 
 /**
  * IBUS_PATH_FACTORY:
@@ -120,6 +134,13 @@
  * D-Bus interface for IBus.
  */
 #define IBUS_INTERFACE_IBUS     "org.freedesktop.IBus"
+
+/**
+ * IBUS_SANDBOX_INTERFACE_IBUS:
+ *
+ * D-Bus sandbox interface for IBus.
+ */
+#define IBUS_SANDBOX_INTERFACE_IBUS     "org.freedesktop.Portals.IBus"
 
 /**
  * IBUS_INTERFACE_INPUT_CONTEXT:
