@@ -32,6 +32,7 @@ AM_CPPFLAGS =                \
 AM_CFLAGS = \
 	@GLIB2_CFLAGS@ \
 	@GIO2_CFLAGS@ \
+	@GIOUNIX2_CFLAGS@ \
 	@GTHREAD2_CFLAGS@ \
 	-DG_LOG_DOMAIN=\"IBUS\" \
 	-DPKGDATADIR=\"$(pkgdatadir)\" \
@@ -43,6 +44,7 @@ AM_LDADD = \
 	@GOBJECT2_LIBS@ \
 	@GLIB2_LIBS@ \
 	@GIO2_LIBS@ \
+	@GIOUNIX2_LIBS@ \
 	@GTHREAD2_LIBS@ \
 	$(libibus) \
 	$(NULL)
@@ -54,6 +56,8 @@ commonsrc = \
 	dbusimpl.h \
 	ibusimpl.c \
 	ibusimpl.h \
+	ibussandboximpl.c \
+	ibussandboximpl.h \
 	inputcontext.c \
 	inputcontext.h \
 	engineproxy.c \
