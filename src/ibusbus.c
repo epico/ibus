@@ -737,6 +737,10 @@ _create_sandbox_input_context (IBusBus      *bus,
                                                      NULL,
                                                      bus->priv->cancellable,
                                                      &error);
+
+            g_dbus_connection_close_sync (bus->priv->connection,
+                                          bus->priv->cancellable,
+                                          &error);
             bus->priv->connection = connection;
         } else {
             g_warning ("ibus_bus_create_input_context: fd_list_length: %d", length);
@@ -803,6 +807,79 @@ _create_input_context_async_step_two_done (GObject      *source_object,
 }
 
 static void
+_create_input_context_async_step_three_done (GDBusConnection *connection,
+                                             GAsyncResult    *res,
+                                             GTask           *task)
+{
+    GError *error = NULL;
+    GUnixFDList *out_fd_list = NULL;
+    GVariant *variant = g_dbus_connection_call_with_unix_fd_list_finish (connection, &out_fd_list,
+                                                                         res, &error);
+    const gchar *path = NULL;
+    IBusBus *bus;
+    GCancellable *cancellable;
+
+    gint length;
+    gint fd;
+    GIOStream *stream = NULL;
+
+    if (variant == NULL) {
+        g_task_return_error (task, error);
+        g_object_unref (task);
+        return;
+    }
+
+    if (g_dbus_connection_is_closed (connection)) {
+        /*
+         * The connection is closed, can not contine next steps, so complete
+         * the asynchronous request with error.
+         */
+        g_variant_unref(variant);
+        g_task_return_new_error (task,
+                G_DBUS_ERROR, G_DBUS_ERROR_FAILED, "Connection is closed.");
+        return;
+    }
+
+    g_variant_get (variant, "(&o)", &path);
+    g_variant_unref(variant);
+
+    bus = (IBusBus *)g_task_get_source_object (task);
+    g_assert (IBUS_IS_BUS (bus));
+
+    cancellable = g_task_get_cancellable (task);
+
+    length = g_unix_fd_list_get_length (out_fd_list);
+    if (length == 1) {
+        fd = g_unix_fd_list_get (out_fd_list, 0, NULL);
+        stream = g_simple_io_stream_new (g_unix_input_stream_new (fd, TRUE),
+                                         g_unix_output_stream_new (fd, TRUE));
+
+        g_dbus_connection_new_sync (stream,
+                                    NULL,
+                                    G_DBUS_CONNECTION_FLAGS_AUTHENTICATION_CLIENT |
+                                    G_DBUS_CONNECTION_FLAGS_MESSAGE_BUS_CONNECTION,
+                                    NULL,
+                                    bus->priv->cancellable,
+                                    &error);
+
+        g_dbus_connection_close_sync (bus->priv->connection,
+                                      cancellable,
+                                      &error);
+        bus->priv->connection = connection;
+
+        ibus_input_context_new_async (path,
+                bus->priv->connection,
+                cancellable,
+                (GAsyncReadyCallback)_create_input_context_async_step_two_done,
+                task);
+
+        return;
+    } else {
+        g_warning ("ibus_bus_create_input_context: fd_list_length: %d", length);
+    }
+}
+
+static void
 _create_input_context_async_step_one_done (GDBusConnection *connection,
                                            GAsyncResult    *res,
                                            GTask           *task)
@@ -814,8 +891,21 @@ _create_input_context_async_step_one_done (GDBusConnection *connection,
     GCancellable *cancellable;
 
     if (variant == NULL) {
-        g_task_return_error (task, error);
-        g_object_unref (task);
+        cancellable = g_task_get_cancellable (task);
+
+        g_dbus_connection_call_with_unix_fd_list (connection,
+                                                  IBUS_SANDBOX_SERVICE_IBUS,
+                                                  IBUS_SANDBOX_PATH_IBUS,
+                                                  IBUS_SANDBOX_INTERFACE_IBUS,
+                                                  "CreateInputContext",
+                                                  g_variant_new ("(s)", "sandbox"),
+                                                  G_VARIANT_TYPE("(o)"),
+                                                  G_DBUS_CALL_FLAGS_NO_AUTO_START,
+                                                  ibus_get_timeout (),
+                                                  NULL,
+                                                  cancellable,
+                                                  (GAsyncReadyCallback)_create_input_context_async_step_three_done,
+                                                  task);
         return;
     }
 
@@ -863,9 +953,11 @@ ibus_bus_create_input_context_async (IBusBus            *bus,
     g_task_set_source_tag (task, ibus_bus_create_input_context_async);
 
     /* do not use ibus_bus_call_async, instread use g_dbus_connection_call
-     * directly, because we need two async steps for create an IBusInputContext.
+     * directly, because we need three async steps for create an IBusInputContext.
      * 1. Call CreateInputContext to request ibus-daemon create a remote IC.
-     * 2. New local IBusInputContext proxy of the remote IC
+     * 2. If succeeds, new local IBusInputContext proxy of the remote IC, and finish.
+     * 3. If failed in step one, try to call CreateInputContext in sandbox.
+     * 4. New local sandbox IBusInputContext proxy of the remote IC, and continue the step two.
      */
     g_dbus_connection_call (bus->priv->connection,
             IBUS_SERVICE_IBUS,
