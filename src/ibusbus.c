@@ -57,6 +57,7 @@ enum {
 struct _IBusBusPrivate {
     GFileMonitor *monitor;
     GDBusConnection *connection;
+    GDBusConnection *input_context_connection;
     gboolean watch_dbus_signal;
     guint watch_dbus_signal_id;
     gboolean watch_ibus_signal;
@@ -318,6 +319,15 @@ ibus_bus_close_connection (IBusBus *bus)
         bus->priv->connection = NULL;
         g_signal_emit (bus, bus_signals[DISCONNECTED], 0);
     }
+
+    /* close input context connection */
+    if (bus->priv->input_context_connection != NULL) {
+        if (!g_dbus_connection_is_closed(bus->priv->input_context_connection))
+            g_dbus_connection_close(bus->priv->input_context_connection,
+                                    NULL, NULL, NULL);
+        g_object_unref (bus->priv->input_context_connection);
+        bus->priv->input_context_connection = NULL;
+    }
 }
 
 static void
@@ -450,6 +460,7 @@ ibus_bus_init (IBusBus *bus)
 
     bus->priv->config = NULL;
     bus->priv->connection = NULL;
+    bus->priv->input_context_connection = NULL;
     bus->priv->watch_dbus_signal = FALSE;
     bus->priv->watch_dbus_signal_id = 0;
     bus->priv->watch_ibus_signal = FALSE;
@@ -563,6 +574,15 @@ ibus_bus_destroy (IBusObject *object)
         g_object_unref (bus->priv->connection);
         bus->priv->connection = NULL;
     }
+
+    if (bus->priv->input_context_connection) {
+        /* FIXME should use async close function */
+        g_dbus_connection_close_sync (bus->priv->input_context_connection,
+                                      NULL, NULL);
+        g_object_unref (bus->priv->input_context_connection);
+        bus->priv->input_context_connection = NULL;
+    }
+
 
     g_free (bus->priv->unique_name);
     bus->priv->unique_name = NULL;
@@ -706,6 +726,9 @@ _create_sandbox_input_context (IBusBus      *bus,
     IBusInputContext *context = NULL;
     GUnixFDList *out_fd_list;
     GVariant *result;
+    gint length;
+    GError *error = NULL;
+
     result = ibus_bus_call_with_unix_fd_list_sync (bus,
                                                    IBUS_SANDBOX_SERVICE_IBUS,
                                                    IBUS_SANDBOX_PATH_IBUS,
@@ -716,15 +739,26 @@ _create_sandbox_input_context (IBusBus      *bus,
                                                    NULL,
                                                    &out_fd_list);
 
+    /* always assume ibus-daemon return the file id only for the first time. */
+    length = g_unix_fd_list_get_length (out_fd_list);
+    if (bus->priv->input_context_connection != NULL) {
+        g_warn_if_fail (length == 0);
+        context = ibus_input_context_new (path, bus->priv->input_context_connection, NULL, &error);
+        g_variant_unref (result);
+        if (context == NULL) {
+            g_warning ("ibus_bus_create_input_context: %s", error->message);
+            g_error_free (error);
+        }
+        return context;
+    }
+
     if (result != NULL) {
-        GError *error = NULL;
-        gint length;
         gint fd;
         GIOStream *stream = NULL;
         GDBusConnection *connection = NULL;
         g_variant_get (result, "(&o)", &path);
 
-        length = g_unix_fd_list_get_length (out_fd_list);
+        g_warn_if_fail (length == 1);
         if (length == 1) {
             fd = g_unix_fd_list_get (out_fd_list, 0, NULL);
             stream = g_simple_io_stream_new (g_unix_input_stream_new (fd, TRUE),
@@ -738,20 +772,15 @@ _create_sandbox_input_context (IBusBus      *bus,
                                                      bus->priv->cancellable,
                                                      &error);
 
-            g_dbus_connection_close_sync (bus->priv->connection,
-                                          bus->priv->cancellable,
-                                          &error);
-            bus->priv->connection = connection;
-        } else {
-            g_warning ("ibus_bus_create_input_context: fd_list_length: %d", length);
+            bus->priv->input_context_connection = connection;
         }
+    }
 
-        context = ibus_input_context_new (path, bus->priv->connection, NULL, &error);
-        g_variant_unref (result);
-        if (context == NULL) {
-            g_warning ("ibus_bus_create_input_context: %s", error->message);
-            g_error_free (error);
-        }
+    context = ibus_input_context_new (path, bus->priv->input_context_connection, NULL, &error);
+    g_variant_unref (result);
+    if (context == NULL) {
+        g_warning ("ibus_bus_create_input_context: %s", error->message);
+        g_error_free (error);
     }
 
     return context;
@@ -767,6 +796,14 @@ ibus_bus_create_input_context (IBusBus      *bus,
     gchar *path;
     IBusInputContext *context = NULL;
     GVariant *result;
+
+    /* check input_context_connection first
+     * before try "org.freedesktop.IBus", as it already fails. */
+    if (bus->priv->input_context_connection != NULL) {
+        context = _create_sandbox_input_context (bus, client_name);
+        return context;
+    }
+
     result = ibus_bus_call_sync (bus,
                                  IBUS_SERVICE_IBUS,
                                  IBUS_PATH_IBUS,
@@ -848,7 +885,20 @@ _create_input_context_async_step_three_done (GDBusConnection *connection,
 
     cancellable = g_task_get_cancellable (task);
 
+    /* always assume ibus-daemon return the file id only for the first time. */
     length = g_unix_fd_list_get_length (out_fd_list);
+    if (bus->priv->input_context_connection != NULL) {
+        g_warn_if_fail (length == 0);
+        ibus_input_context_new_async (path,
+                bus->priv->input_context_connection,
+                cancellable,
+                (GAsyncReadyCallback)_create_input_context_async_step_two_done,
+                task);
+
+        return;
+    }
+
+    g_warn_if_fail (length == 1);
     if (length == 1) {
         fd = g_unix_fd_list_get (out_fd_list, 0, NULL);
         stream = g_simple_io_stream_new (g_unix_input_stream_new (fd, TRUE),
@@ -862,20 +912,15 @@ _create_input_context_async_step_three_done (GDBusConnection *connection,
                                     bus->priv->cancellable,
                                     &error);
 
-        g_dbus_connection_close_sync (bus->priv->connection,
-                                      cancellable,
-                                      &error);
-        bus->priv->connection = connection;
+        bus->priv->input_context_connection = connection;
 
         ibus_input_context_new_async (path,
-                bus->priv->connection,
+                bus->priv->input_context_connection,
                 cancellable,
                 (GAsyncReadyCallback)_create_input_context_async_step_two_done,
                 task);
 
         return;
-    } else {
-        g_warning ("ibus_bus_create_input_context: fd_list_length: %d", length);
     }
 }
 
@@ -944,6 +989,7 @@ ibus_bus_create_input_context_async (IBusBus            *bus,
                                      gpointer            user_data)
 {
     GTask *task;
+    GDBusConnection *connection = NULL;
 
     g_return_if_fail (IBUS_IS_BUS (bus));
     g_return_if_fail (client_name != NULL);
@@ -951,6 +997,25 @@ ibus_bus_create_input_context_async (IBusBus            *bus,
 
     task = g_task_new (bus, cancellable, callback, user_data);
     g_task_set_source_tag (task, ibus_bus_create_input_context_async);
+
+    /* check input_context_connection first
+     * before try "org.freedesktop.IBus", as it already fails. */
+    if (bus->priv->input_context_connection != NULL) {
+        g_dbus_connection_call_with_unix_fd_list (connection,
+                                                  IBUS_SANDBOX_SERVICE_IBUS,
+                                                  IBUS_SANDBOX_PATH_IBUS,
+                                                  IBUS_SANDBOX_INTERFACE_IBUS,
+                                                  "CreateInputContext",
+                                                  g_variant_new ("(s)", "sandbox"),
+                                                  G_VARIANT_TYPE("(o)"),
+                                                  G_DBUS_CALL_FLAGS_NO_AUTO_START,
+                                                  ibus_get_timeout (),
+                                                  NULL,
+                                                  cancellable,
+                                                  (GAsyncReadyCallback)_create_input_context_async_step_three_done,
+                                                  task);
+        return;
+    }
 
     /* do not use ibus_bus_call_async, instread use g_dbus_connection_call
      * directly, because we need three async steps for create an IBusInputContext.
