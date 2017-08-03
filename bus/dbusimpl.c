@@ -1472,6 +1472,36 @@ bus_dbus_impl_connection_filter_cb (GDBusConnection *dbus_connection,
     BusConnection *connection = bus_connection_lookup (dbus_connection);
     g_assert (connection != NULL);
 
+    const GPtrArray *allowed_paths = bus_connection_get_allowed_paths (connection);
+    if (allowed_paths != NULL) {
+        /* connection from the flatpak sandbox */
+        const gchar *destination = g_dbus_message_get_destination (message);
+
+        /* allow "Hello" method */
+        gboolean found = FALSE;
+        if (g_strcmp0 (destination, "org.freedesktop.DBus") == 0) {
+            const gchar *member = g_dbus_message_get_member (message);
+            if (g_strcmp0 (member, "Hello") == 0)
+                found = TRUE;
+        }
+
+        for (guint i = 0; i < allowed_paths->len; ++i) {
+            const gchar *path = g_ptr_array_index (allowed_paths, i);
+            /* assume the path is not null */
+            if (strcmp (destination, path) == 0)
+                found = TRUE;
+        }
+
+        /* drop the message as it is not for the input context */
+        if (!found) {
+            g_object_unref (message);
+            message = NULL;
+            return message;
+        }
+
+        /* fall back to normal dispatch rule */
+    }
+
     if (incoming) {
         /* is incoming message */
 

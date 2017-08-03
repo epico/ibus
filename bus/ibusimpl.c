@@ -149,11 +149,6 @@ static void     bus_ibus_impl_set_context_engine_from_desc
                                         (BusIBusImpl        *ibus,
                                          BusInputContext    *context,
                                          IBusEngineDesc     *desc);
-static BusInputContext
-               *bus_ibus_impl_create_input_context
-                                        (BusIBusImpl        *ibus,
-                                         BusConnection      *connection,
-                                         const gchar        *client);
 static IBusEngineDesc
                *bus_ibus_impl_get_engine_desc
                                         (BusIBusImpl        *ibus,
@@ -860,7 +855,7 @@ _context_destroy_cb (BusInputContext    *context,
  *
  * Create a new BusInputContext object for the client.
  */
-static BusInputContext *
+BusInputContext *
 bus_ibus_impl_create_input_context (BusIBusImpl   *ibus,
                                     BusConnection *connection,
                                     const gchar   *client)

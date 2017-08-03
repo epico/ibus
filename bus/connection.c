@@ -31,6 +31,10 @@ struct _BusConnection {
 
     /* underlying GDBus connetion */
     GDBusConnection *connection;
+    /* underlying BusConnection for sandbox input context */
+    BusConnection *input_context_connection;
+    /* allowed dbus path */
+    GPtrArray *allowed_paths;
     /* a unique name of the connection like ":1.0" */
     gchar *unique_name;
     /* list for well known names */
@@ -96,6 +100,10 @@ bus_connection_destroy (BusConnection *connection)
         connection->connection = NULL;
     }
 
+    connection->input_context_connection = NULL;
+    if (connection->allowed_paths)
+        g_ptr_array_unref (connection->allowed_paths);
+
     if (connection->unique_name) {
         g_free (connection->unique_name);
         connection->unique_name = NULL;
@@ -146,6 +154,10 @@ bus_connection_new (GDBusConnection *dbus_connection)
     g_return_val_if_fail (bus_connection_lookup (dbus_connection) == NULL, NULL);
     BusConnection *connection = BUS_CONNECTION (g_object_new (BUS_TYPE_CONNECTION, NULL));
     bus_connection_set_dbus_connection (connection, dbus_connection);
+
+    connection->input_context_connection = NULL;
+    connection->allowed_paths = NULL;
+
     return connection;
 }
 
@@ -216,6 +228,39 @@ bus_connection_get_dbus_connection (BusConnection *connection)
 {
     g_assert (BUS_IS_CONNECTION (connection));
     return connection->connection;
+}
+
+const GPtrArray *
+bus_connection_get_allowed_paths   (BusConnection      *connection)
+{
+    g_assert (BUS_IS_CONNECTION (connection));
+    return connection->allowed_paths;
+}
+
+void
+bus_connection_allow_path          (BusConnection      *connection,
+                                    const gchar * path)
+{
+    g_assert (BUS_IS_CONNECTION (connection));
+    if (connection->allowed_paths == NULL)
+        connection->allowed_paths = g_ptr_array_new_with_free_func (g_free);
+
+    /* only allow access to the input context dbus path. */
+    g_ptr_array_add (connection->allowed_paths, g_strdup (path));
+}
+
+BusConnection   *bus_connection_get_input_context_connection (BusConnection *connection)
+{
+    g_assert (BUS_IS_CONNECTION (connection));
+    return connection->input_context_connection;
+}
+
+void             bus_connection_set_input_context_connection (BusConnection *connection,
+                                                              BusConnection *input_context_connection)
+{
+    g_assert (BUS_IS_CONNECTION (connection));
+    g_assert (BUS_IS_CONNECTION (input_context_connection));
+    connection->input_context_connection = input_context_connection;
 }
 
 void

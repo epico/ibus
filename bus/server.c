@@ -27,6 +27,7 @@
 
 #include "dbusimpl.h"
 #include "ibusimpl.h"
+#include "ibussandboximpl.h"
 #include "global.h"
 
 
@@ -34,6 +35,7 @@ static GDBusServer *server = NULL;
 static GMainLoop *mainloop = NULL;
 static BusDBusImpl *dbus = NULL;
 static BusIBusImpl *ibus = NULL;
+static BusIBusSandBoxImpl *ibus_sandbox = NULL;
 static gchar *address = NULL;
 static gboolean _restart = FALSE;
 
@@ -100,7 +102,9 @@ bus_server_init (void)
 
     dbus = bus_dbus_impl_get_default ();
     ibus = bus_ibus_impl_get_default ();
+    ibus_sandbox = bus_ibus_sandbox_impl_get_default ();
     bus_dbus_impl_register_object (dbus, (IBusService *)ibus);
+    bus_dbus_impl_register_object (dbus, (IBusService *)ibus_sandbox);
 
     /* init server */
     GDBusServerFlags flags = G_DBUS_SERVER_FLAGS_AUTHENTICATION_ALLOW_ANONYMOUS;
@@ -144,6 +148,12 @@ bus_server_get_address (void)
     return address;
 }
 
+const gchar *
+bus_server_get_guid (void)
+{
+    return g_dbus_server_get_guid (server);
+}
+
 void
 bus_server_run (void)
 {
@@ -158,6 +168,7 @@ bus_server_run (void)
 
     ibus_object_destroy ((IBusObject *)dbus);
     ibus_object_destroy ((IBusObject *)ibus);
+    ibus_object_destroy ((IBusObject *)ibus_sandbox);
 
     /* release resources */
     g_object_unref (server);

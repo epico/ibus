@@ -112,6 +112,26 @@ gboolean         bus_connection_has_name            (BusConnection      *connect
 GDBusConnection *bus_connection_get_dbus_connection (BusConnection      *connection);
 
 /**
+ * bus_connection_get_allowed_paths:
+ *
+ * Get the allowed dbus path for sandbox connection.
+ */
+const GPtrArray *bus_connection_get_allowed_paths   (BusConnection      *connection);
+
+/**
+ * bus_connection_allow_path:
+ *
+ * Allow the dbus path for sandbox connection.
+ */
+void             bus_connection_allow_path          (BusConnection      *connection, const gchar * path);
+
+
+BusConnection   *bus_connection_get_input_context_connection (BusConnection *connection);
+
+void             bus_connection_set_input_context_connection (BusConnection *connection,
+                                                              BusConnection *input_context_connection);
+
+/**
  * bus_connection_set_filter:
  *
  * Set a filter function which will be called on all incoming and outgoing messages on the connection.
