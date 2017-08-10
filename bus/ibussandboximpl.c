@@ -111,6 +111,35 @@ bus_ibus_sandbox_impl_destroy (BusIBusSandBoxImpl *ibus_sandbox)
     IBUS_OBJECT_CLASS (bus_ibus_sandbox_impl_parent_class)->destroy (IBUS_OBJECT (ibus_sandbox));
 }
 
+static void
+_connect_async_done (GObject      *source_object,
+                     GAsyncResult *res,
+                     gpointer      user_data)
+{
+    GError *error = NULL;
+    GDBusConnection *dbus_connection = g_dbus_connection_new_finish (res, &error);
+
+    if (dbus_connection == NULL ||
+        g_dbus_connection_is_closed (dbus_connection))
+        return;
+
+    BusConnection *connection = bus_connection_new (dbus_connection);
+    bus_connection_restrict_path (connection);
+    bus_dbus_impl_new_connection (bus_dbus_impl_get_default (),
+                                  connection);
+
+    if (g_object_is_floating (connection)) {
+        /* bus_dbus_impl_new_connection couldn't handle the connection. just del
+           ete the connection and return
+           * (so that other connection handler will not handle the deleted connect
+           ion.) */
+        ibus_object_destroy ((IBusObject *)connection);
+        g_object_unref (connection);
+    }
+
+    return;
+}
+
 /**
  * _ibus_sandbox_connect:
  *
@@ -124,9 +153,6 @@ _ibus_sandbox_connect (BusIBusSandBoxImpl    *ibus_sandbox,
 {
     const gchar *client_name = NULL;  // e.g. "gtk-im"
     g_variant_get (parameters, "(&s)", &client_name);
-
-    BusConnection *connection =
-            bus_connection_lookup (g_dbus_method_invocation_get_connection (invocation));
 
     GUnixFDList *fds = g_unix_fd_list_new ();
 
@@ -150,35 +176,17 @@ _ibus_sandbox_connect (BusIBusSandBoxImpl    *ibus_sandbox,
 
     fd = fd_pair[1];
     GIOStream *stream = NULL;
-    GDBusConnection *conn = NULL;
+
     stream = g_simple_io_stream_new (g_unix_input_stream_new (fd, TRUE),
                                      g_unix_output_stream_new (fd, TRUE));
 
-    conn = g_dbus_connection_new_sync (stream,
-                                       bus_server_get_guid (),
-                                       G_DBUS_CONNECTION_FLAGS_AUTHENTICATION_SERVER |
-                                       G_DBUS_CONNECTION_FLAGS_AUTHENTICATION_ALLOW_ANONYMOUS,
-                                       NULL,
-                                       NULL,
-                                       &error);
-
-    BusConnection *input_context_connection = bus_connection_new (conn);
-    bus_connection_restrict_path (input_context_connection);
-    bus_dbus_impl_new_connection (bus_dbus_impl_get_default (),
-                                  input_context_connection);
-
-    if (g_object_is_floating (conn)) {
-        /* bus_dbus_impl_new_connection couldn't handle the connection. */
-        ibus_object_destroy ((IBusObject *)conn);
-        g_object_unref (conn);
-
-        g_dbus_method_invocation_return_error (invocation,
-                                               G_DBUS_ERROR,
-                                               G_DBUS_ERROR_FAILED,
-                                               "Connect failed!");
-        g_object_unref (fds);
-        return;
-    }
+    g_dbus_connection_new (stream,
+                           bus_server_get_guid (),
+                           G_DBUS_CONNECTION_FLAGS_AUTHENTICATION_SERVER |
+                           G_DBUS_CONNECTION_FLAGS_AUTHENTICATION_ALLOW_ANONYMOUS,
+                           NULL,
+                           NULL,
+                           _connect_async_done, NULL);
 
     g_dbus_method_invocation_return_value_with_unix_fd_list (invocation, NULL, fds);
     g_object_unref (fds);
