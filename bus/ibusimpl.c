@@ -919,6 +919,7 @@ _ibus_create_input_context (BusIBusImpl           *ibus,
                                                 client_name);
     if (context) {
         const gchar *path = ibus_service_get_object_path ((IBusService *) context);
+        bus_connection_allow_path (connection, path);
         /* the format-string 'o' is for a D-Bus object path. */
         g_dbus_method_invocation_return_value (invocation, g_variant_new ("(o)", path));
         g_object_unref (context);

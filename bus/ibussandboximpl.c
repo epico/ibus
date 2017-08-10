@@ -163,6 +163,7 @@ _ibus_sandbox_connect (BusIBusSandBoxImpl    *ibus_sandbox,
                                        &error);
 
     BusConnection *input_context_connection = bus_connection_new (conn);
+    bus_connection_restrict_path (input_context_connection);
     bus_dbus_impl_new_connection (bus_dbus_impl_get_default (),
                                   input_context_connection);
 

@@ -31,6 +31,9 @@ struct _BusConnection {
 
     /* underlying GDBus connetion */
     GDBusConnection *connection;
+    /* allowed dbus paths;
+       if not set, then allow to access all dbus paths */
+    GPtrArray *allowed_paths;
     /* a unique name of the connection like ":1.0" */
     gchar *unique_name;
     /* list for well known names */
@@ -96,6 +99,11 @@ bus_connection_destroy (BusConnection *connection)
         connection->connection = NULL;
     }
 
+    if (connection->allowed_paths) {
+        g_ptr_array_unref (connection->allowed_paths);
+        connection->allowed_paths = NULL;
+    }
+
     if (connection->unique_name) {
         g_free (connection->unique_name);
         connection->unique_name = NULL;
@@ -146,6 +154,8 @@ bus_connection_new (GDBusConnection *dbus_connection)
     g_return_val_if_fail (bus_connection_lookup (dbus_connection) == NULL, NULL);
     BusConnection *connection = BUS_CONNECTION (g_object_new (BUS_TYPE_CONNECTION, NULL));
     bus_connection_set_dbus_connection (connection, dbus_connection);
+
+    connection->allowed_paths = NULL;
     return connection;
 }
 
@@ -238,4 +248,51 @@ bus_connection_set_filter (BusConnection             *connection,
                                                               user_data_free_func);
         /* Note: g_dbus_connection_add_filter seems not to return zero as a valid id. */
     }
+}
+
+void
+bus_connection_restrict_path (BusConnection      *connection)
+{
+    g_assert (BUS_IS_CONNECTION (connection));
+    g_assert (connection->allowed_paths == NULL);
+    connection->allowed_paths = g_ptr_array_new_with_free_func (g_free);
+}
+
+void
+bus_connection_allow_path (BusConnection      *connection,
+                           const gchar * path)
+{
+    g_assert (BUS_IS_CONNECTION (connection));
+
+    /* from normal connection */
+    if (connection->allowed_paths == NULL)
+        return;
+
+    /* in sandbox */
+    /* only allow access to the input context dbus path. */
+    g_ptr_array_add (connection->allowed_paths, g_strdup (path));
+}
+
+gboolean
+bus_connection_is_path_allowed (BusConnection      *connection,
+                                const gchar * destination)
+{
+    g_assert (BUS_IS_CONNECTION (connection));
+
+    /* from normal connection */
+    if (connection->allowed_paths == NULL)
+        return TRUE;
+
+    /* in sandbox */
+    gboolean found = FALSE;
+
+    const GPtrArray *allowed_paths = connection->allowed_paths;
+    for (guint i = 0; i < allowed_paths->len; ++i) {
+        const gchar *path = g_ptr_array_index (allowed_paths, i);
+
+        if (g_strcmp0 (destination, path) == 0)
+            found = TRUE;
+    }
+
+    return found;
 }
