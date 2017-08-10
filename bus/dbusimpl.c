@@ -1472,12 +1472,41 @@ bus_dbus_impl_connection_filter_cb (GDBusConnection *dbus_connection,
     BusConnection *connection = bus_connection_lookup (dbus_connection);
     g_assert (connection != NULL);
 
+    /* get the destination aka bus name of the message. the destination is set by g_dbus_connection_call_sync (for DBus and IBus messages
+     * in the IBusBus class) or g_initable_new (for config and context messages in the IBusProxy sub classes.) */
+    const gchar *destination = g_dbus_message_get_destination (message);
+
+    if (!bus_connection_is_path_allowed (connection, destination)) {
+        /* connection from the flatpak sandbox */
+
+        /* allow "Hello" method */
+        gboolean found = FALSE;
+        if (g_strcmp0 (destination, "org.freedesktop.DBus") == 0) {
+            const gchar *member = g_dbus_message_get_member (message);
+            if (g_strcmp0 (member, "Hello") == 0)
+                found = TRUE;
+        }
+
+        /* allow "CreateInputContext" method */
+        if (g_strcmp0 (destination, "org.freedesktop.IBus") == 0) {
+            const gchar *member = g_dbus_message_get_member (message);
+            if (g_strcmp0 (member, "CreateInputContext") == 0)
+                found = TRUE;
+        }
+
+        /* drop the message as it is not for the input context */
+        if (!found) {
+            g_object_unref (message);
+            message = NULL;
+            return message;
+        }
+
+        /* fall back to normal dispatch rule */
+    }
+
     if (incoming) {
         /* is incoming message */
 
-        /* get the destination aka bus name of the message. the destination is set by g_dbus_connection_call_sync (for DBus and IBus messages
-         * in the IBusBus class) or g_initable_new (for config and context messages in the IBusProxy sub classes.) */
-        const gchar *destination = g_dbus_message_get_destination (message);
         GDBusMessageType message_type = g_dbus_message_get_message_type (message);
 
         if (g_dbus_message_get_locked (message)) {

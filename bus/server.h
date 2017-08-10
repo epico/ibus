@@ -58,5 +58,11 @@ void         bus_server_quit        (gboolean restart);
  */
 const gchar *bus_server_get_address (void);
 
+/**
+ * bus_server_get_guid:
+ * @returns: the server guid.
+ */
+const gchar *bus_server_get_guid (void);
+
 G_END_DECLS
 #endif
